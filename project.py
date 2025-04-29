@@ -1,19 +1,64 @@
 import cv2
 import numpy as np
 import tkinter as tk
-from tkinter import filedialog, ttk, font as tkFont
+from tkinter import filedialog, ttk, messagebox
 from PIL import Image, ImageTk
 from scipy.signal import wiener
 
-# --- Original Image Processing Functions (Unchanged) ---
+
+def sobel_deblur(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+    grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+
+    sobel = cv2.magnitude(grad_x, grad_y)
+    sobel = cv2.normalize(sobel, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    sobel_color = cv2.cvtColor(sobel, cv2.COLOR_GRAY2BGR)
+    sharpened = cv2.addWeighted(image, 1.0, sobel_color, 0.5, 0)
+    return sharpened
+
+
+def prewitt_deblur(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    kernel_x = np.array([[1, 0, -1], [1, 0, -1], [1, 0, -1]])
+    kernel_y = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
+
+    grad_x = cv2.filter2D(gray, -1, kernel_x)
+    grad_y = cv2.filter2D(gray, -1, kernel_y)
+
+    prewitt = cv2.magnitude(grad_x.astype(np.float32), grad_y.astype(np.float32))
+    prewitt = cv2.normalize(prewitt, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    prewitt_color = cv2.cvtColor(prewitt, cv2.COLOR_GRAY2BGR)
+    sharpened = cv2.addWeighted(image, 1.0, prewitt_color, 0.5, 0)
+    return sharpened
+
+
+def scharr_deblur(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    grad_x = cv2.Scharr(gray, cv2.CV_64F, 1, 0)
+    grad_y = cv2.Scharr(gray, cv2.CV_64F, 0, 1)
+
+    scharr = cv2.magnitude(grad_x, grad_y)
+    scharr = cv2.normalize(scharr, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    scharr_color = cv2.cvtColor(scharr, cv2.COLOR_GRAY2BGR)
+    sharpened = cv2.addWeighted(image, 1.0, scharr_color, 0.5, 0)
+    return sharpened
+
+
 def highBoost_filter(image):
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
     (x, y) = image.shape
-    K = (1 / 4.8976) * np.array([[0.3679, 0.6065, 0.3679],
-                                  [0.6065, 1.0000, 0.6065],
-                                  [0.3679, 0.6065, 0.3679]])
+    K = (1 / (2 * np.pi)) * np.array([[0.1353, 0.2707, 0.1353],
+                                     [0.2707, 0.5413, 0.2707],
+                                     [0.1353, 0.2707, 0.1353]])
+    K = K / K.sum()
     blurred = np.zeros_like(image, dtype=np.float32)
     padim = np.pad(image, ((1, 1), (1, 1)), mode='edge')
     for row in range(x):
@@ -21,46 +66,41 @@ def highBoost_filter(image):
             subim = padim[row:row+3, col:col+3]
             blurred[row, col] = np.sum(subim * K)
     blurred = np.clip(blurred, 0, 255).astype(np.uint8)
-    coin = image.astype(np.int32) - blurred.astype(np.int32)
-    result = np.clip(image.astype(np.int32) + 5*(coin), 0, 255).astype(np.uint8)
+    mask = image.astype(np.int32) - blurred.astype(np.int32)
+    k_boost = 1.2
+    result = image.astype(np.int32) + k_boost * mask
+    result = np.clip(result, 0, 255).astype(np.uint8)
     return result
 
 def laplacian_filter(image):
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    k = np.array([[1, 1, 1], [1, -8, 1], [1, 1, 1]], dtype=np.int32)
+    k = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.int32)
     (x, y) = image.shape
     laplacian = np.zeros_like(image, dtype=np.int32)
     padim = np.pad(image, ((1, 1), (1, 1)), mode='edge')
     for row in range(x):
         for col in range(y):
-            subim = padim[row:row+3, col:col+3].astype(np.int32)
+            subim = padim[row:row+3, col:col+3]
             laplacian[row, col] = np.sum(subim * k)
-    laplacian = np.clip(laplacian, -255, 255)
-    alpha = 0.3
-    if image.dtype == 'uint8':
-         deblurred_intermediate = image.astype(np.int32) - alpha * laplacian
-    else:
-         deblurred_intermediate = image - alpha * laplacian
-    print(" Data type of deblurred intermediate" ,deblurred_intermediate.dtype)
-    deblurred = np.clip(deblurred_intermediate, 0, 255).astype(np.uint8)
-    return deblurred
+    alpha = 0.5
+    enhanced = image.astype(np.float32) - alpha * laplacian.astype(np.float32)
+    enhanced = np.clip(enhanced, 0, 255).astype(np.uint8)
+    return enhanced
 
 def wiener_filter(image):
     if len(image.shape) == 3:
         image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    mean = 0
-    stddev = 10
-    noise = np.random.normal(mean, stddev, image.shape)
-    noisy_img = image.astype(np.float32) + noise
-    noisy_img = np.clip(noisy_img, 0, 255)
-    filtered_img = wiener(noisy_img, (7, 7))
+    filtered_img = wiener(image.astype(np.float32), (5, 5))
     filtered_uint8 = np.clip(filtered_img, 0, 255).astype(np.uint8)
     return filtered_uint8
 
-def apply_filter(image_in, filter_type):
-    if image_in is None: return None
-    img_copy = image_in.copy()
+
+def apply_filter(image, filter_type):
+    if image is None:
+        print("No image loaded.")
+        return None
+    img_copy = image.copy()
     if filter_type == "none":
         return img_copy
     elif filter_type == "High Boost":
@@ -69,202 +109,256 @@ def apply_filter(image_in, filter_type):
         return laplacian_filter(img_copy)
     elif filter_type == "Wiener Filter":
         return wiener_filter(img_copy)
+    elif filter_type == "Sobel Filter":
+        return sobel_deblur(img_copy)
+    elif filter_type == "Prewitt Filter":
+        return prewitt_deblur(img_copy)
+    elif filter_type == "Scharr Filter":
+        return scharr_deblur(img_copy)
     return img_copy
 
-# --- GUI Functions ---
-def process_image():
-    global image
-    if image is None:
-        print("Please upload an image first.")
-        # Optionally show a message box: tk.messagebox.showwarning("No Image", "Please upload an image first.")
-        return
-    img_to_process = image.copy()
-    selected_filter = filter_var.get()
-    processed_result = apply_filter(img_to_process, selected_filter)
-    if processed_result is not None:
-        display_image(processed_result, output_canvas)
-
-def upload_image():
-    global image
-    file_path = filedialog.askopenfilename(
-         title="Select Image",
-         filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.tiff")]
-    )
-    if file_path:
-        img_read = cv2.imread(file_path)
-        if img_read is None:
-            print(f"Error: Could not read image file {file_path}")
-            image = None
-            input_canvas.delete("all")
-            input_canvas.imgtk = None
-            output_canvas.delete("all")
-            output_canvas.create_text(150, 150, text="Could not load image", fill="red", font=default_font)
-            output_canvas.imgtk = None
-        else:
-            image = img_read
-            display_image(image, input_canvas)
-            output_canvas.delete("all")
-            # Added placeholder text here as well
-            output_canvas.create_text(150, 150, fill=FG_COLOR, font=default_font)
-            output_canvas.imgtk = None
-            filter_var.set("none")
-
 def display_image(img, canvas):
-    # Original display logic with fixed 300x300 resize
+    if img is None:
+        canvas.delete("all")
+        if 'imgtk' in canvas.__dict__: del canvas.imgtk
+        return
+
     if len(img.shape) == 2:
         img_rgb = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    elif img.shape[2] == 3:
+    elif len(img.shape) == 3:
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     else:
-        print("Warning: Unexpected image shape for display.")
+        messagebox.showerror("Display Error", f"Unexpected image shape: {img.shape}")
         return
+
+    canvas_width = 300
+    canvas_height = 300
     img_pil = Image.fromarray(img_rgb)
-    img_pil = img_pil.resize((300, 300), Image.Resampling.LANCZOS)
+    img_ratio = img_pil.width / img_pil.height
+    canvas_ratio = canvas_width / canvas_height
+
+    if img_ratio > canvas_ratio:
+        new_width = canvas_width
+        new_height = int(new_width / img_ratio)
+    else:
+        new_height = canvas_height
+        new_width = int(new_height * img_ratio)
+
+    new_width = max(1, new_width)
+    new_height = max(1, new_height)
+
+    try:
+        img_pil = img_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    except ValueError as e:
+         messagebox.showerror("Resize Error", f"Error resizing image: {e}")
+         return
+
     imgtk = ImageTk.PhotoImage(image=img_pil)
-    canvas.imgtk = imgtk
     canvas.delete("all")
-    canvas.create_image(0, 0, anchor='nw', image=imgtk)
+    pad_x = (canvas_width - new_width) // 2
+    pad_y = (canvas_height - new_height) // 2
+    canvas.create_image(pad_x, pad_y, anchor='nw', image=imgtk)
+    canvas.imgtk = imgtk
 
-# --- GUI Setup ---
+def display_processed_image_final(processed_img):
+    """Displays the processed image on the output canvas."""
+    display_image(processed_img, output_canvas)
+    download_button.pack(pady=(15, 0), anchor='center')
 
-# --- New Color Palette: Dark Theme with ORANGE Accent ---
-BG_COLOR = "#1A1A1A"       # Very Dark Grey Background
-FG_COLOR = "#ECF0F1"       # Light Grey/Off-White Text
-ACCENT_COLOR = "#FFA500"   # Bright Orange Accent
-ACCENT_DARK = "#E69500"    # Darker Orange for Hover/Active
-COMPONENT_BG = "#2C3E50"   # Dark Slate Blue/Grey (for dropdown)
-CANVAS_BG = "#212121"      # Near-Black for canvas background
+def process_image():
+    """Applies the selected filter, shows processing text, then displays result."""
+    global original_image, processed_images
+    if original_image is None:
+        messagebox.showwarning("No Image", "Please upload an image first.")
+        return
+
+    selected_filter = filter_var.get()
+
+    output_canvas.delete("all")
+    if 'imgtk' in output_canvas.__dict__: del output_canvas.imgtk
+    download_button.pack_forget() 
+    output_canvas.create_text(150, 150, text="Processing...",
+                              font=('Segoe UI', 14, 'italic'), fill=FG_COLOR, anchor='center')
+    app.update_idletasks()
+
+    processed_img = None 
+    if selected_filter == "none":
+        processed_img = original_image.copy()
+        processed_images["output"] = processed_img
+        app.after(300, lambda: display_processed_image_final(processed_img))
+    else:
+        processed_img = apply_filter(original_image, selected_filter)
+        if processed_img is not None:
+            processed_images["output"] = processed_img
+            app.after(500, lambda: display_processed_image_final(processed_img))
+        else:
+            output_canvas.delete("all")
+            output_canvas.create_text(150, 150, text="Filter Failed",
+                                      font=('Segoe UI', 14, 'bold'), fill='red', anchor='center')
+            processed_images["output"] = None 
+
+
+def upload_image():
+    """Handles image upload and resets state."""
+    global original_image, processed_images
+    file_path = filedialog.askopenfilename(
+        title="Select an Image File",
+        filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.tif")]
+    )
+    if file_path:
+        img = cv2.imread(file_path)
+        if img is None:
+            messagebox.showerror("Error", "Failed to load image file.")
+            return
+        original_image = img
+        processed_images["input"] = original_image.copy()
+        display_image(original_image, input_canvas)
+
+        output_canvas.delete("all")
+        if 'imgtk' in output_canvas.__dict__: del output_canvas.imgtk
+        processed_images["output"] = None
+        filter_var.set("none")
+        download_button.pack_forget()
+
+def download_image():
+    """Opens a save dialog and saves the processed image."""
+    if processed_images.get("output") is None:
+        messagebox.showwarning("No Image", "No processed image available to download.")
+        return
+
+    filter_name = filter_var.get().replace(" ", "_") if filter_var.get() != "none" else "filtered"
+    initial_filename = f"processed_{filter_name}.png"
+
+    file_path = filedialog.asksaveasfilename(
+        title="Save Processed Image As...",
+        initialfile=initial_filename,
+        defaultextension=".png",
+        filetypes=[("PNG files", "*.png"),
+                   ("JPEG files", "*.jpg"),
+                   ("BMP files", "*.bmp"),
+                   ("TIFF files", "*.tif"),
+                   ("All files", "*.*")]
+    )
+
+    if file_path:
+        try:
+            success = cv2.imwrite(file_path, processed_images["output"])
+            if success:
+                messagebox.showinfo("Success", f"Image saved successfully to:\n{file_path}")
+            else:
+                messagebox.showerror("Save Error", "Failed to save image. Check file path and extension.")
+        except Exception as e:
+            messagebox.showerror("Save Error", f"An error occurred while saving:\n{e}")
+
 
 app = tk.Tk()
-app.title("✨ Image Deblurring App✨")
-app.geometry("900x550")
-app.configure(bg=BG_COLOR)
-app.resizable(False, False)
+app.title("Image Enhancement App")
+app.geometry("950x600")
 
-# --- Font Definitions ---
-try:
-    default_font = tkFont.nametofont("TkDefaultFont")
-    default_font.configure(family="Segoe UI", size=10)
-    title_font = tkFont.Font(family="Segoe UI", size=16, weight="bold")
-    label_font = tkFont.Font(family="Segoe UI", size=11, weight="bold")
-    button_font = tkFont.Font(family="Segoe UI", size=11, weight="bold")
-except: # Fallback font
-    default_font = tkFont.nametofont("TkDefaultFont")
-    default_font.configure(family="Helvetica", size=10)
-    title_font = tkFont.Font(family="Helvetica", size=16, weight="bold")
-    label_font = tkFont.Font(family="Helvetica", size=11, weight="bold")
-    button_font = tkFont.Font(family="Helvetica", size=11, weight="bold")
-app.option_add("*Font", default_font)
+BG_COLOR = "#1e1e1e"
+FG_COLOR = "#eeeeee"
+ACCENT_ORANGE = "#FF7700"
+ACCENT_ORANGE_ACTIVE = "#FF8C00"
+ACCENT_ORANGE_PRESSED = "#E66A00"
+BTN_FG = "#FFFFFF"
+FRAME_BG = "#2d2d2d"
+CANVAS_BG = "#3c3c3c"
+SELECT_BG = "#3c3c3c"
+SELECT_FG = "#eeeeee"
+CANVAS_BORDER = "#4f4f4f"
 
-# --- Style configuration for ttk widgets (Dropdown) ---
-style = ttk.Style()
+style = ttk.Style(app)
 style.theme_use('clam')
-style.configure('.', background=BG_COLOR, foreground=FG_COLOR)
-style.configure('TFrame', background=BG_COLOR)
-style.configure('TLabel', background=BG_COLOR, foreground=FG_COLOR, font=default_font)
-style.configure('TMenubutton',
-                font=default_font,
-                background=COMPONENT_BG, # Keep dropdown distinct
-                foreground=FG_COLOR,
-                arrowcolor=FG_COLOR,
-                bordercolor=ACCENT_COLOR, # Use new accent for border
-                relief=tk.FLAT,
-                padding=(10, 6))
-style.map('TMenubutton',
-          background=[('active', ACCENT_DARK)], # Use new accent hover
-          foreground=[('active', 'black')]) # Black text on orange active
+app.configure(bg=BG_COLOR)
 
-# --- Global Variables ---
-image = None
-processed_images = {}
+style.configure('TFrame', background=FRAME_BG)
+style.configure('TLabel', background=FRAME_BG, foreground=FG_COLOR, font=('Segoe UI', 10))
+style.configure('Title.TLabel', background=BG_COLOR, foreground=ACCENT_ORANGE, font=('Segoe UI', 18, 'bold'))
+style.configure('Header.TLabel', background=FRAME_BG, foreground=ACCENT_ORANGE, font=('Segoe UI', 12, 'bold'))
+style.configure('TButton',
+                font=('Segoe UI', 11, 'bold'), padding=(15, 10), relief='flat',
+                background=ACCENT_ORANGE, foreground=BTN_FG)
+style.map('TButton',
+          background=[('active', ACCENT_ORANGE_ACTIVE), ('pressed', ACCENT_ORANGE_PRESSED)],
+          foreground=[('active', BTN_FG)])
+style.configure('TMenubutton',
+                font=('Segoe UI', 10), background=SELECT_BG, foreground=SELECT_FG,
+                padding=(10, 5), arrowcolor=FG_COLOR, relief='flat')
+style.map('TMenubutton',
+          background=[('active', '#4f4f4f')],
+          arrowcolor=[('active', ACCENT_ORANGE)])
+style.configure('Download.TButton',
+                font=('Segoe UI', 10, 'bold'), padding=(12, 8), relief='flat',
+                background=FG_COLOR, foreground=BG_COLOR)
+style.map('Download.TButton',
+          background=[('active', '#cccccc'), ('pressed', '#bbbbbb')],
+          foreground=[('active', BG_COLOR)])
+
+
+original_image = None
+processed_images = {"input": None, "output": None}
+
 filter_var = tk.StringVar(value="none")
 
-# --- Main container ---
-main_frame = ttk.Frame(app, padding="20 20 20 20")
-main_frame.pack(fill="both", expand=True)
+main_app_frame = ttk.Frame(app, padding="20 20 20 20", style='BGColor.TFrame')
+style.configure('BGColor.TFrame', background=BG_COLOR)
+main_app_frame.pack(fill="both", expand=True)
 
-# --- Control panel ---
-control_frame = ttk.Frame(main_frame, padding="15 15")
-control_frame.pack(side="left", fill="y", padx=(0, 25))
+top_frame = ttk.Frame(main_app_frame, style='BGColor.TFrame')
+top_frame.pack(fill="both", expand=True)
 
-# Title
-title_label = ttk.Label(control_frame,
-                        text="Image Deblurring",
-                        font=title_font,
-                        foreground=ACCENT_COLOR) # Orange Title
-# Reduced pady below title for tighter alignment
-title_label.pack(pady=(0, 15), anchor="center")
+control_frame = ttk.Frame(top_frame, padding="15 15", style='TFrame')
+control_frame.pack(side="left", fill="y", padx=(0, 20))
 
-# --- Button Hover Effects ---
-def on_enter(e):
-    e.widget['background'] = ACCENT_DARK # Darker Orange
+image_display_frame = ttk.Frame(top_frame, style='TFrame')
+image_display_frame.pack(side="right", fill="both", expand=True)
 
-def on_leave(e):
-    e.widget['background'] = ACCENT_COLOR # Bright Orange
+title_label = ttk.Label(main_app_frame,
+                        text="Image Enhancement",
+                        style='Title.TLabel',
+                        anchor="w")
+title_label.pack(pady=(0, 10), padx=(0,0), anchor='nw', before=top_frame)
 
-# --- Buttons ---
-common_button_options = {
-    "bg": ACCENT_COLOR,       # Bright Orange
-    "fg": "black",            # Black text for better contrast on orange
-    "font": button_font,
-    "relief": tk.FLAT,
-    "borderwidth": 0,
-    "width": 20,
-    "padx": 10,
-    "pady": 8,
-    "activebackground": ACCENT_DARK, # Darker Orange
-    "activeforeground": "black"      # Keep text black when active
-}
+upload_btn = ttk.Button(control_frame, text="📂 Upload Image", command=upload_image, style='TButton')
+upload_btn.pack(fill="x", pady=(10, 30))
 
-upload_btn = tk.Button(control_frame, text="📂 Upload Image", command=upload_image, **common_button_options)
-upload_btn.pack(fill="x", pady=(10, 20)) # Added some padding above
-upload_btn.bind("<Enter>", on_enter)
-upload_btn.bind("<Leave>", on_leave)
+filter_label = ttk.Label(control_frame, text="Select Filter:", style='Header.TLabel')
+filter_label.pack(anchor="w", pady=(0, 5))
 
-# Filter selection
-filter_label = ttk.Label(control_frame, text="Select Filter:", font=label_font)
-filter_label.pack(anchor="w", pady=(10, 5))
-filter_menu = ttk.OptionMenu(control_frame, filter_var, "none", "none", "High Boost", "Laplacian", "Wiener Filter", style='TMenubutton')
+filter_menu = ttk.OptionMenu(control_frame, filter_var, "none", "none", "High Boost", "Laplacian", "Wiener Filter", "Sobel Filter","Prewitt Filter","Scharr Filter", style='TMenubutton')
+filter_menu["menu"].config(bg=SELECT_BG, fg=SELECT_FG,
+                           activebackground=ACCENT_ORANGE, activeforeground=BTN_FG,
+                           font=('Segoe UI', 10), relief='flat')
 filter_menu.pack(fill="x", pady=(0, 20))
 
-process_btn = tk.Button(control_frame, text="🚀 Apply Filter", command=process_image, **common_button_options)
-process_btn.pack(fill="x", pady=(15, 0))
-process_btn.bind("<Enter>", on_enter)
-process_btn.bind("<Leave>", on_leave)
+process_btn = ttk.Button(control_frame, text="🚀 Apply Filter", command=process_image, style='TButton')
+process_btn.pack(fill="x", pady=(20, 0))
 
-# --- Image display frame ---
-image_frame = tk.Frame(main_frame, bg=BG_COLOR)
-image_frame.pack(side="right", fill="both", expand=True, padx=(10, 0))
-image_frame.grid_columnconfigure(0, weight=1)
-image_frame.grid_columnconfigure(1, weight=1)
-image_frame.grid_rowconfigure(0, weight=0)
-image_frame.grid_rowconfigure(1, weight=1)
+input_frame = ttk.Frame(image_display_frame, padding="10 10", style='TFrame')
+input_frame.pack(side="left", fill="both", expand=True, padx=(0, 5))
 
-# --- Input Image Area ---
-input_label_frame = tk.Frame(image_frame, bg=BG_COLOR)
-input_label_frame.grid(row=0, column=0, pady=(0, 5), sticky="ew")
-input_label = tk.Label(input_label_frame, text="Original Image", font=label_font, bg=BG_COLOR, fg=FG_COLOR)
-input_label.pack()
+output_frame = ttk.Frame(image_display_frame, padding="10 10", style='TFrame')
+output_frame.pack(side="right", fill="both", expand=True, padx=(5, 0))
 
-input_canvas = tk.Canvas(image_frame, width=300, height=300,
-                         bg=CANVAS_BG,          # Near-black background
-                         highlightthickness=1,
-                         highlightbackground=ACCENT_COLOR) # Orange border
-input_canvas.grid(row=1, column=0, padx=10, pady=(0, 10))
+input_label = ttk.Label(input_frame, text="Original Image", style='Header.TLabel', anchor="center")
+input_label.pack(pady=(0, 10), fill='x')
+input_canvas = tk.Canvas(input_frame, width=300, height=300, bg=CANVAS_BG, highlightthickness=1, highlightbackground=CANVAS_BORDER)
+input_canvas.pack(pady=5)
 
-# --- Output Image Area ---
-output_label_frame = tk.Frame(image_frame, bg=BG_COLOR)
-output_label_frame.grid(row=0, column=1, pady=(0, 5), sticky="ew")
-output_label = tk.Label(output_label_frame, text="Processed Image", font=label_font, bg=BG_COLOR, fg=FG_COLOR)
-output_label.pack()
+output_label = ttk.Label(output_frame, text="Processed Image", style='Header.TLabel', anchor="center")
+output_label.pack(pady=(0, 10), fill='x')
+output_canvas = tk.Canvas(output_frame, width=300, height=300, bg=CANVAS_BG, highlightthickness=1, highlightbackground=CANVAS_BORDER)
+output_canvas.pack(pady=5)
 
-output_canvas = tk.Canvas(image_frame, width=300, height=300,
-                          bg=CANVAS_BG,         # Near-black background
-                          highlightthickness=1,
-                          highlightbackground=ACCENT_COLOR) # Orange border
-output_canvas.grid(row=1, column=1, padx=10, pady=(0, 10))
+download_frame = ttk.Frame(main_app_frame, style='BGColor.TFrame')
+download_frame.pack(fill="x", pady=(10, 0))
 
-# Initial placeholder text
-output_canvas.create_text(150, 150, fill=FG_COLOR, font=default_font)
+download_button = ttk.Button(download_frame,
+                             text="⬇️ Download Image",
+                             command=download_image,
+                             style='TButton')
+
+
+app.update_idletasks()
 
 app.mainloop()
