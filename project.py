@@ -23,7 +23,7 @@ def sobel_deblur(image):
 def prewitt_deblur(image):
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
-    kernel_x = np.array([[1, 0, -1], [1, 0, -1], [1, 0, -1]])
+    kernel_x = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]])
     kernel_y = np.array([[1, 1, 1], [0, 0, 0], [-1, -1, -1]])
 
     grad_x = cv2.filter2D(gray, -1, kernel_x)
@@ -161,12 +161,10 @@ def display_image(img, canvas):
     canvas.imgtk = imgtk
 
 def display_processed_image_final(processed_img):
-    """Displays the processed image on the output canvas."""
     display_image(processed_img, output_canvas)
     download_button.pack(pady=(15, 0), anchor='center')
 
 def process_image():
-    """Applies the selected filter, shows processing text, then displays result."""
     global original_image, processed_images
     if original_image is None:
         messagebox.showwarning("No Image", "Please upload an image first.")
@@ -199,7 +197,6 @@ def process_image():
 
 
 def upload_image():
-    """Handles image upload and resets state."""
     global original_image, processed_images
     file_path = filedialog.askopenfilename(
         title="Select an Image File",
@@ -221,7 +218,6 @@ def upload_image():
         download_button.pack_forget()
 
 def download_image():
-    """Opens a save dialog and saves the processed image."""
     if processed_images.get("output") is None:
         messagebox.showwarning("No Image", "No processed image available to download.")
         return
@@ -354,7 +350,7 @@ download_frame = ttk.Frame(main_app_frame, style='BGColor.TFrame')
 download_frame.pack(fill="x", pady=(10, 0))
 
 download_button = ttk.Button(download_frame,
-                             text="⬇️ Download Image",
+                             text="Download Image",
                              command=download_image,
                              style='TButton')
 
